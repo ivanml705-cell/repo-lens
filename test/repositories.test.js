@@ -102,3 +102,76 @@ test('CLI renders readable text, help and empty results', async t => {
   await repository(root, 'demo');
   assert.match(run(root).stdout, /\[clean\] demo \(main\)/);
 });
+
+test('CLI filters local changes and combines case-insensitive name matches', async t => {
+  const root = await fixture(t);
+  await repository(root, 'api-clean');
+  const modified = await repository(root, 'API modified');
+  await writeFile(path.join(modified, 'README.md'), 'Modified tracked file');
+  const staged = await repository(root, 'api-staged');
+  await writeFile(path.join(staged, 'README.md'), 'Staged change');
+  git(staged, 'add', '.');
+  const untracked = await repository(root, 'web');
+  await writeFile(path.join(untracked, 'new.txt'), 'Untracked');
+  const names = (...args) => {
+    const result = spawnSync(process.execPath, [cli, root, '--json', ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout).repositories.map(repo => repo.name).sort();
+  };
+  assert.deepEqual(names('--dirty'), ['API modified', 'api-staged', 'web']);
+  assert.deepEqual(names('--name', 'ApI'), ['API modified', 'api-clean', 'api-staged']);
+  assert.deepEqual(names('--dirty', '--name=api'), ['API modified', 'api-staged']);
+  assert.deepEqual(names('--name', 'API modified'), ['API modified']);
+  assert.deepEqual(names('--name', 'missing'), []);
+  const text = spawnSync(process.execPath, [cli, '--dirty', '--name', 'MODIFIED', root], { encoding: 'utf8' });
+  assert.equal(text.status, 0);
+  assert.match(text.stdout, /\[changed\] API modified/);
+  assert.doesNotMatch(text.stdout, /api-clean|api-staged|\bweb\b/);
+});
+
+test('CLI reports no matches without failing and documents the filters', async t => {
+  const root = await fixture(t);
+  await repository(root, 'clean');
+  const run = (...args) => spawnSync(process.execPath, [cli, root, ...args], { encoding: 'utf8' });
+  for (const args of [['--dirty'], ['--name', 'absent']]) {
+    const result = run(...args);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /No Git repositories match the filters/);
+  }
+  assert.match(run('--help').stdout, /--dirty/);
+  assert.match(run('--help').stdout, /--name TEXT/);
+});
+
+test('CLI rejects missing and empty name values and invalid boolean values', () => {
+  for (const args of [['--name'], ['--name', '--dirty'], ['--name='], ['--name', '   '], ['--dirty=yes']]) {
+    const result = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 2, JSON.stringify(args));
+    assert.ok(result.stderr.trim());
+    assert.equal(result.stdout, '');
+  }
+});
+
+test('CLI retains scan errors even when filters exclude every successful repository', async t => {
+  const root = await fixture(t);
+  await repository(root, 'clean');
+  await mkdir(path.join(root, 'broken'));
+  await writeFile(path.join(root, 'broken', '.git'), 'gitdir: missing');
+  const result = spawnSync(process.execPath, [cli, root, '--dirty', '--name', 'absent', '--json'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(output.repositories, []);
+  assert.equal(output.errors.length, 1);
+  assert.equal(output.errors[0].path, path.join(root, 'broken'));
+});
+
+test('CLI accepts a dash-prefixed directory after the option separator', async t => {
+  const root = await fixture(t);
+  await repository(root, '-project');
+  const result = spawnSync(process.execPath, [cli, '--json', '--', '-project'], { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).repositories[0].name, '-project');
+  const missing = spawnSync(process.execPath, [cli, '--', '--json'], { cwd: root, encoding: 'utf8' });
+  assert.equal(missing.status, 1);
+  assert.equal(missing.stdout, '');
+  assert.match(missing.stderr, /Repo Lens:/);
+});
