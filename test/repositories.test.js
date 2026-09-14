@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { scanRepositories } from '../src/repositories.js';
+import { scanRepositories, inspectRepository } from '../src/repositories.js';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: 'pipe' });
@@ -51,6 +51,73 @@ test('handles an empty repository and a detached checkout', async t => {
   const { repositories } = await scanRepositories(root);
   assert.match(repositories.find(r => r.name === 'detached').branch, /^detached:[a-f0-9]+$/);
   assert.equal(repositories.find(r => r.name === 'empty').lastCommit, null);
+  assert.deepEqual(repositories.find(r => r.name === 'empty').changes,
+    { staged: 0, unstaged: 0, untracked: 0, conflicted: 0 });
+});
+
+test('counts tracked changes and individual untracked files with CLI output', async t => {
+  const root = await fixture(t);
+  const repo = await repository(root, 'counts');
+  await writeFile(path.join(repo, '.gitignore'), '*.log\n');
+  await writeFile(path.join(repo, 'delete.txt'), 'remove later');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-m', 'Add fixtures');
+  await writeFile(path.join(repo, 'README.md'), 'staged');
+  git(repo, 'add', 'README.md');
+  await writeFile(path.join(repo, 'README.md'), 'staged plus unstaged');
+  await unlink(path.join(repo, 'delete.txt'));
+  await mkdir(path.join(repo, 'new folder'));
+  await writeFile(path.join(repo, 'new folder', 'one.txt'), 'new');
+  await writeFile(path.join(repo, 'new folder', 'two.txt'), 'new');
+  await writeFile(path.join(repo, 'ignored.log'), 'ignore');
+  git(repo, 'config', 'status.showUntrackedFiles', 'no');
+  const expected = { staged: 1, unstaged: 2, untracked: 2, conflicted: 0 };
+  assert.deepEqual(inspectRepository(repo).changes, expected);
+  const run = (...args) => spawnSync(process.execPath, [cli, root, '--dirty', '--name', 'counts', ...args], { encoding: 'utf8' });
+  const json = run('--json');
+  assert.equal(json.status, 0, json.stderr);
+  assert.deepEqual(JSON.parse(json.stdout).repositories[0].changes, expected);
+  const text = run();
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /1 staged, 2 unstaged, 2 untracked/);
+});
+
+test('counts a rename once with spaces and Unicode even when rename detection is disabled in config', async t => {
+  const root = await fixture(t);
+  const repo = await repository(root, 'renames');
+  git(repo, 'config', 'status.renames', 'false');
+  git(repo, 'mv', 'README.md', 'renamed café file.md');
+  assert.deepEqual(inspectRepository(repo).changes, { staged: 1, unstaged: 0, untracked: 0, conflicted: 0 });
+  await writeFile(path.join(repo, 'renamed café file.md'), 'edited after rename');
+  assert.deepEqual(inspectRepository(repo).changes, { staged: 1, unstaged: 1, untracked: 0, conflicted: 0 });
+});
+
+test('counts real filenames containing line breaks and tabs', { skip: process.platform === 'win32' }, async t => {
+  const root = await fixture(t);
+  const repo = await repository(root, 'unusual');
+  git(repo, 'mv', 'README.md', 'line\nbreak\t.md');
+  await writeFile(path.join(repo, 'new\nfile\t.txt'), 'new');
+  assert.deepEqual(inspectRepository(repo).changes, { staged: 1, unstaged: 0, untracked: 1, conflicted: 0 });
+});
+
+test('reports real merge conflicts separately and keeps the repository dirty', async t => {
+  const root = await fixture(t);
+  const repo = await repository(root, 'conflict');
+  git(repo, 'checkout', '-b', 'other');
+  await writeFile(path.join(repo, 'README.md'), 'other\n');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-m', 'Other change');
+  git(repo, 'checkout', 'main');
+  await writeFile(path.join(repo, 'README.md'), 'main\n');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-m', 'Main change');
+  assert.throws(() => git(repo, '-c', 'core.hooksPath=/dev/null', 'merge', '--no-edit', 'other'));
+  const result = inspectRepository(repo);
+  assert.equal(result.dirty, true);
+  assert.deepEqual(result.changes, { staged: 0, unstaged: 0, untracked: 0, conflicted: 1 });
+  const text = spawnSync(process.execPath, [cli, root, '--dirty'], { encoding: 'utf8' });
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /0 staged, 0 unstaged, 0 untracked, 1 conflicted/);
 });
 
 test('scans the root repository and recognizes linked worktrees', async t => {
@@ -108,6 +175,7 @@ test('CLI filters local changes and combines case-insensitive name matches', asy
   await repository(root, 'api-clean');
   const modified = await repository(root, 'API modified');
   await writeFile(path.join(modified, 'README.md'), 'Modified tracked file');
+  assert.deepEqual(inspectRepository(modified).changes, { staged: 0, unstaged: 1, untracked: 0, conflicted: 0 });
   const staged = await repository(root, 'api-staged');
   await writeFile(path.join(staged, 'README.md'), 'Staged change');
   git(staged, 'add', '.');

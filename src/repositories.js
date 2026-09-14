@@ -1,12 +1,14 @@
 import { execFileSync } from 'node:child_process';
 import { readdir, access } from 'node:fs/promises';
 import path from 'node:path';
+import { countChanges } from './status.js';
 
-function git(directory, args) {
-  return execFileSync('git', ['-C', directory, ...args], {
+function git(directory, args, raw = false) {
+  const output = execFileSync('git', ['-C', directory, ...args], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 10000,
     env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
-  }).trim();
+  });
+  return raw ? output : output.trim();
 }
 
 async function hasGitMarker(directory) {
@@ -16,7 +18,8 @@ async function hasGitMarker(directory) {
 
 export function inspectRepository(directory) {
   // Porcelain v1 with NUL separators handles spaces and newlines in filenames.
-  const status = git(directory, ['status', '--porcelain=v1', '-z']);
+  const status = git(directory, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--renames'], true);
+  const changes = countChanges(status);
   let branch;
   try { branch = git(directory, ['symbolic-ref', '--short', 'HEAD']); }
   catch { branch = `detached:${git(directory, ['rev-parse', '--short', 'HEAD'])}`; }
@@ -25,10 +28,10 @@ export function inspectRepository(directory) {
   catch {
     // A newly initialized repository has no commits yet.
     try { git(directory, ['rev-parse', '--verify', 'HEAD']); }
-    catch { return { name: path.basename(directory), path: directory, branch, dirty: status.length > 0, lastCommit }; }
+    catch { return { name: path.basename(directory), path: directory, branch, dirty: status.length > 0, lastCommit, changes }; }
     throw new Error('Unable to read the last commit');
   }
-  return { name: path.basename(directory), path: directory, branch, dirty: status.length > 0, lastCommit };
+  return { name: path.basename(directory), path: directory, branch, dirty: status.length > 0, lastCommit, changes };
 }
 
 export async function scanRepositories(root) {

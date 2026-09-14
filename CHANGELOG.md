@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — 2026-09-14
+
+- Report staged, unstaged, untracked, and conflicted path counts in text and JSON.
+- Preserve raw status spacing so unstaged changes are classified correctly.
+- Count detected renames once and enumerate individual files inside untracked folders.
+- Cover mixed changes, ignored files, conflicts, renames, and unusual filenames.
+
 ## Unreleased — 2026-09-10
 
 - Add `--dirty` to show repositories with local changes.

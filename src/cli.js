@@ -59,6 +59,8 @@ async function main(args) {
       ? 'No Git repositories match the filters.' : 'No Git repositories found.');
     for (const repo of result.repositories) {
       console.log(`${repo.dirty ? '[changed]' : '[clean]'} ${printable(repo.name)} (${printable(repo.branch)})`);
+      const { staged, unstaged, untracked, conflicted } = repo.changes;
+      console.log(`  ${staged} staged, ${unstaged} unstaged, ${untracked} untracked${conflicted ? `, ${conflicted} conflicted` : ''}`);
       console.log(`  ${printable(repo.lastCommit ?? 'No commits yet')}`);
     }
     for (const error of result.errors) console.error(`Error: ${printable(error.path)}: ${printable(error.message)}`);
