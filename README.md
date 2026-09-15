@@ -2,7 +2,7 @@
 
 A small, dependency-free CLI that gives you a quick overview of your local Git repositories.
 
-**Status: early development.** Repository scanning, filters, and file change counts are working; upstream summaries will follow.
+**Status: early development.** Repository scanning, filters, file change counts, and upstream summaries are working. Configurable discovery is next.
 
 ## Requirements
 
@@ -30,15 +30,41 @@ Example output:
 ```text
 [clean] notes-cli (main)
   0 staged, 0 unstaged, 0 untracked
+  origin/main: 0 ahead, 0 behind (local refs)
   Add Markdown export
 [changed] repo-lens (main)
   1 staged, 2 unstaged, 3 untracked
+  origin/main: 2 ahead, 1 behind (local refs)
   Add local repository scanning
 ```
 
 The scan includes ordinary repositories and Git worktrees. Empty repositories display `No commits yet`; detached checkouts display `detached:<commit>`. Bare repositories are outside the initial scope.
 
-JSON output contains `repositories` and `errors`. Each repository includes `name`, `path`, `branch`, `dirty`, `lastCommit`, and `changes`. A failed repository does not prevent other repositories from being reported. Exit code `1` indicates scan errors; `2` indicates invalid arguments.
+JSON output contains `repositories` and `errors`. Each repository includes `name`, `path`, `branch`, `dirty`, `lastCommit`, `changes`, and `upstream`. A failed repository does not prevent other repositories from being reported. Exit code `1` indicates scan errors; `2` indicates invalid arguments.
+
+## Upstream comparison
+
+The summary compares the current branch with its configured upstream (a remote-tracking or local branch). `ahead` counts commits only on the current branch; `behind` counts commits only on the upstream. Both may be positive when the branches diverge.
+
+```json
+{ "status": "tracked", "name": "origin/main", "ahead": 2, "behind": 1 }
+```
+
+The `upstream.status` field distinguishes these cases:
+
+| Status | Meaning | Counts |
+| --- | --- | --- |
+| `tracked` | Both refs can be compared | Nonnegative integers |
+| `none` | No upstream is configured | `null` |
+| `gone` | Configured upstream ref is unavailable locally | `null` |
+| `unborn` | Current branch has no commits yet | `null` |
+| `detached` | HEAD is not attached to a branch | `null` |
+
+`name` is the upstream's short ref name for `tracked` and `gone`, otherwise `null`. Unavailable counts are never presented as zero and these expected states do not fail a scan.
+
+Counts use locally available refs and history only. Repo Lens does not fetch, push, or contact remotes, and disables lazy fetching. A remote-tracking ref may be stale; `gone` does not prove the branch was deleted on the server. Shallow history can limit the comparison. Update your refs separately if you need fresher results.
+
+`--dirty` still filters file changes, not unpushed commits: a clean repository can be ahead of its upstream. The implementation reads [upstream metadata](https://git-scm.com/docs/git-for-each-ref) and counts the [symmetric commit difference](https://git-scm.com/docs/git-rev-list).
 
 ## Change counts
 

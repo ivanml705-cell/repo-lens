@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — 2026-09-15
+
+- Show upstream names and ahead/behind commit counts in text and JSON.
+- Distinguish missing upstream refs, unconfigured tracking, unborn branches, and detached HEAD.
+- Compare local refs only and disable lazy fetching; keep file-change filters unchanged.
+- Test synced, ahead, behind, diverged, local-upstream, and worktree cases without remote access.
+
 ## Unreleased — 2026-09-14
 
 - Report staged, unstaged, untracked, and conflicted path counts in text and JSON.

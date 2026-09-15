@@ -51,6 +51,10 @@ test('handles an empty repository and a detached checkout', async t => {
   const { repositories } = await scanRepositories(root);
   assert.match(repositories.find(r => r.name === 'detached').branch, /^detached:[a-f0-9]+$/);
   assert.equal(repositories.find(r => r.name === 'empty').lastCommit, null);
+  assert.deepEqual(repositories.find(r => r.name === 'empty').upstream,
+    { status: 'unborn', name: null, ahead: null, behind: null });
+  assert.deepEqual(repositories.find(r => r.name === 'detached').upstream,
+    { status: 'detached', name: null, ahead: null, behind: null });
   assert.deepEqual(repositories.find(r => r.name === 'empty').changes,
     { staged: 0, unstaged: 0, untracked: 0, conflicted: 0 });
 });
@@ -128,6 +132,70 @@ test('scans the root repository and recognizes linked worktrees', async t => {
   const linked = (await scanRepositories(root)).repositories.find(r => r.name === 'linked');
   assert.equal(linked.branch, 'feature');
   assert.equal(linked.dirty, false);
+  assert.equal(linked.upstream.status, 'none');
+});
+
+test('reports synced, ahead, behind and diverged upstreams using local refs only', async t => {
+  const root = await fixture(t);
+  const repo = await repository(root, 'tracked');
+  // Deliberately inaccessible remote: all information must come from local refs.
+  git(repo, 'remote', 'add', 'origin', path.join(root, 'nonexistent-remote'));
+  git(repo, 'config', 'branch.main.remote', 'origin');
+  git(repo, 'config', 'branch.main.merge', 'refs/heads/main');
+  git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const expected = (ahead, behind) => ({ status: 'tracked', name: 'origin/main', ahead, behind });
+  assert.deepEqual(inspectRepository(repo).upstream, expected(0, 0));
+  git(repo, 'checkout', '-b', 'remote-side');
+  git(repo, 'commit', '--allow-empty', '-m', 'Remote one');
+  git(repo, 'commit', '--allow-empty', '-m', 'Remote two');
+  git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(repo, 'checkout', 'main');
+  assert.deepEqual(inspectRepository(repo).upstream, expected(0, 2));
+  git(repo, 'commit', '--allow-empty', '-m', 'Local one');
+  assert.deepEqual(inspectRepository(repo).upstream, expected(1, 2));
+  const run = (...args) => spawnSync(process.execPath, [cli, root, ...args], {
+    encoding: 'utf8', env: { ...process.env, GIT_ALLOW_PROTOCOL: '' },
+  });
+  const json = run('--name', 'tracked', '--json');
+  assert.equal(json.status, 0, json.stderr);
+  assert.deepEqual(JSON.parse(json.stdout).repositories[0].upstream, expected(1, 2));
+  assert.match(run().stdout, /origin\/main: 1 ahead, 2 behind \(local refs\)/);
+  assert.deepEqual(JSON.parse(run('--dirty', '--json').stdout).repositories, []);
+  git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git(repo, 'commit', '--allow-empty', '-m', 'Local two');
+  assert.deepEqual(inspectRepository(repo).upstream, expected(1, 0));
+});
+
+test('distinguishes absent and gone upstreams without failing the scan', async t => {
+  const root = await fixture(t);
+  const repo = await repository(root, 'gone');
+  assert.deepEqual(inspectRepository(repo).upstream,
+    { status: 'none', name: null, ahead: null, behind: null });
+  git(repo, 'remote', 'add', 'origin', path.join(root, 'missing'));
+  git(repo, 'config', 'branch.main.remote', 'origin');
+  git(repo, 'config', 'branch.main.merge', 'refs/heads/main');
+  const result = await scanRepositories(root);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.repositories[0].upstream,
+    { status: 'gone', name: 'origin/main', ahead: null, behind: null });
+  const text = spawnSync(process.execPath, [cli, root], { encoding: 'utf8' });
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /Upstream origin\/main unavailable locally/);
+});
+
+test('supports a local upstream and linked worktrees', async t => {
+  const root = await fixture(t);
+  const repo = await repository(root, 'source');
+  git(repo, 'branch', 'base');
+  git(repo, 'branch', '--set-upstream-to=base', 'main');
+  assert.deepEqual(inspectRepository(repo).upstream,
+    { status: 'tracked', name: 'base', ahead: 0, behind: 0 });
+  const linked = path.join(root, 'linked');
+  git(repo, 'worktree', 'add', '-b', 'feature/topic', linked);
+  git(linked, 'branch', '--set-upstream-to=main');
+  git(linked, 'commit', '--allow-empty', '-m', 'Worktree change');
+  assert.deepEqual(inspectRepository(linked).upstream,
+    { status: 'tracked', name: 'main', ahead: 1, behind: 0 });
 });
 
 test('a broken repository does not hide a valid one', async t => {

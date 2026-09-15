@@ -13,6 +13,7 @@ Scans the directory itself and its immediate child folders.
   -h, --help   Show this help
 
 Filters can be combined. Use -- before a directory starting with a dash.
+Upstream counts use local refs only; no fetch is performed.
 
 Exit codes: 0 success, 1 filesystem/Git error, 2 invalid arguments.
 `;
@@ -61,6 +62,14 @@ async function main(args) {
       console.log(`${repo.dirty ? '[changed]' : '[clean]'} ${printable(repo.name)} (${printable(repo.branch)})`);
       const { staged, unstaged, untracked, conflicted } = repo.changes;
       console.log(`  ${staged} staged, ${unstaged} unstaged, ${untracked} untracked${conflicted ? `, ${conflicted} conflicted` : ''}`);
+      const upstream = repo.upstream;
+      if (upstream.status === 'tracked') {
+        console.log(`  ${printable(upstream.name)}: ${upstream.ahead} ahead, ${upstream.behind} behind (local refs)`);
+      } else {
+        const labels = { none: 'No upstream configured', unborn: 'Upstream unavailable: no commits yet',
+          detached: 'Upstream unavailable: detached HEAD', gone: `Upstream ${printable(upstream.name)} unavailable locally` };
+        console.log(`  ${labels[upstream.status]}`);
+      }
       console.log(`  ${printable(repo.lastCommit ?? 'No commits yet')}`);
     }
     for (const error of result.errors) console.error(`Error: ${printable(error.path)}: ${printable(error.message)}`);
