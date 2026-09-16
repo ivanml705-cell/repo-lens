@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — 2026-09-16
+
+- Add `--depth` for nested repository discovery, retaining the default depth of one.
+- Add repeatable `--exclude` folder names to prune discovery subtrees.
+- Add `--max-dirs` with partial results and an explicit error when the visit budget is exhausted.
+- Skip Git metadata and child directory links; retain results when a child scan fails.
+- Test depth boundaries, exclusions, directory budgets, link cycles, and invalid arguments.
+
 ## Unreleased — 2026-09-15
 
 - Show upstream names and ahead/behind commit counts in text and JSON.

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, unlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, unlink, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,89 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { scanRepositories, inspectRepository } from '../src/repositories.js';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+
+test('scan depth includes the root, respects boundaries and discovers nested repositories', async t => {
+  const root = await fixture(t);
+  const parent = await repository(root, 'parent', false);
+  await repository(parent, 'child', false);
+  const nested = path.join(parent, 'group');
+  await mkdir(nested);
+  await repository(nested, 'grandchild', false);
+  const names = async options => (await scanRepositories(parent, options)).repositories.map(repo => repo.name);
+  assert.deepEqual(await names({ depth: 0 }), ['parent']);
+  assert.deepEqual(await names(), ['parent', 'child']);
+  assert.deepEqual(await names({ depth: 2 }), ['parent', 'child', 'grandchild']);
+  const missing = path.join(root, 'missing');
+  await assert.rejects(scanRepositories(missing, { depth: 0 }));
+  const file = path.join(root, 'file');
+  await writeFile(file, 'file');
+  await assert.rejects(scanRepositories(file, { depth: 0 }), /Not a directory/);
+});
+
+test('exclusions prune whole subtrees by literal folder name, including repeated CLI flags', async t => {
+  const root = await fixture(t);
+  for (const folder of ['vendor', 'archive', 'keep', '.git']) {
+    await mkdir(path.join(root, folder));
+    await repository(path.join(root, folder), 'project', false);
+  }
+  // A .git directory on the root is intentionally invalid; exclude it from traversal.
+  const result = await scanRepositories(root, { depth: 2, exclude: ['vendor', 'archive'] });
+  assert.deepEqual(result.repositories.map(repo => repo.path), [path.join(root, 'keep', 'project')]);
+  assert.equal(result.errors.length, 1);
+  const cliResult = spawnSync(process.execPath, [cli, root, '--depth=2', '--exclude', 'vendor', '--exclude=archive', '--json'], { encoding: 'utf8' });
+  assert.equal(cliResult.status, 1);
+  assert.deepEqual(JSON.parse(cliResult.stdout).repositories.map(repo => repo.path), [path.join(root, 'keep', 'project')]);
+  const explicitRoot = await scanRepositories(path.join(root, 'keep', 'project'), { depth: 0, exclude: ['project'] });
+  assert.equal(explicitRoot.repositories.length, 1);
+});
+
+test('directory budget returns partial results and a single explicit error', async t => {
+  const root = await fixture(t);
+  await repository(root, 'a', false);
+  await repository(root, 'b', false);
+  const result = await scanRepositories(root, { depth: 1, maxDirs: 2 });
+  assert.deepEqual(result.repositories.map(repo => repo.name), ['a']);
+  assert.equal(result.errors.length, 1);
+  assert.match(result.errors[0].message, /scan is incomplete/);
+  assert.equal((await scanRepositories(root, { maxDirs: 3 })).errors.length, 0);
+  assert.equal((await scanRepositories(root, { maxDirs: 2, exclude: ['b'] })).errors.length, 0);
+  const cliResult = spawnSync(process.execPath, [cli, root, '--max-dirs', '2', '--json'], { encoding: 'utf8' });
+  assert.equal(cliResult.status, 1);
+  assert.equal(JSON.parse(cliResult.stdout).repositories.length, 1);
+});
+
+test('discovery skips child directory links and cycles', async t => {
+  const root = await fixture(t);
+  const scanRoot = path.join(root, 'scan');
+  await mkdir(scanRoot);
+  const outside = await repository(root, 'outside', false);
+  await repository(scanRoot, 'inside', false);
+  const type = process.platform === 'win32' ? 'junction' : 'dir';
+  await symlink(outside, path.join(scanRoot, 'external-link'), type);
+  await symlink(scanRoot, path.join(scanRoot, 'loop'), type);
+  const result = await scanRepositories(scanRoot, { depth: 10, maxDirs: 2 });
+  assert.deepEqual(result.repositories.map(repo => repo.name), ['inside']);
+  assert.deepEqual(result.errors, []);
+});
+
+test('CLI validates traversal options before scanning', async t => {
+  const root = await fixture(t);
+  for (const args of [
+    ['--depth', '11'], ['--depth=-1'], ['--depth', '1.5'], ['--depth='], ['--depth', '1e1'],
+    ['--max-dirs', '0'], ['--max-dirs', '100001'], ['--max-dirs', 'Infinity'],
+    ['--exclude='], ['--exclude', '   '], ['--exclude', 'a/b'], ['--exclude', 'a\\b'], ['--exclude', '..'],
+  ]) {
+    const result = spawnSync(process.execPath, [cli, root, ...args], { encoding: 'utf8' });
+    assert.equal(result.status, 2, JSON.stringify(args));
+    assert.ok(result.stderr.trim());
+  }
+  const repo = await repository(root, 'project', false);
+  const success = spawnSync(process.execPath, [cli, root, '--depth', '1', '--name', 'project', '--json'], { encoding: 'utf8' });
+  assert.equal(success.status, 0, success.stderr);
+  assert.equal(JSON.parse(success.stdout).repositories[0].path, repo);
+  await assert.rejects(scanRepositories(root, { depth: 100 }), /--depth/);
+  await assert.rejects(scanRepositories(root, { exclude: 'vendor' }), /--exclude/);
+});
 const git = (cwd, ...args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', stdio: 'pipe' });
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'repo-lens-'));

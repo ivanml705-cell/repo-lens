@@ -2,7 +2,7 @@
 
 A small, dependency-free CLI that gives you a quick overview of your local Git repositories.
 
-**Status: early development.** Repository scanning, filters, file change counts, and upstream summaries are working. Configurable discovery is next.
+**Status: early development.** Configurable discovery, filters, file change counts, and upstream summaries are working. Final polish for v0.2 is next.
 
 ## Requirements
 
@@ -23,7 +23,7 @@ On Windows, quote paths containing spaces:
 node src/cli.js "C:\Users\you\Documents\GitHubProjects"
 ```
 
-No package installation is required. The tool reads the selected directory and its immediate child folders; it does not recursively crawl your disk or modify your repositories.
+No package installation is required. By default, the tool reads the selected directory and its immediate child folders. Use `--depth` to explore further. It does not modify your repositories.
 
 Example output:
 
@@ -41,6 +41,24 @@ Example output:
 The scan includes ordinary repositories and Git worktrees. Empty repositories display `No commits yet`; detached checkouts display `detached:<commit>`. Bare repositories are outside the initial scope.
 
 JSON output contains `repositories` and `errors`. Each repository includes `name`, `path`, `branch`, `dirty`, `lastCommit`, `changes`, and `upstream`. A failed repository does not prevent other repositories from being reported. Exit code `1` indicates scan errors; `2` indicates invalid arguments.
+
+## Discover nested repositories
+
+```sh
+node src/cli.js /path/to/projects --depth 3
+node src/cli.js /path/to/projects --depth 3 --exclude node_modules --exclude archive
+node src/cli.js /path/to/projects --depth 2 --max-dirs 2000 --dirty --json
+```
+
+- `--depth N`: root is depth `0`, immediate children are depth `1` (the default). Accepts integers from `0` to `10`. Nested repositories are discovered even inside another repository, up to this depth.
+- `--exclude NAME`: skip folders with this exact, case-sensitive name at any level, including their entire subtree. Repeat the flag for multiple names. Names are literal, not globs or relative paths. Quote names containing spaces. The explicitly selected root is always considered.
+- `--max-dirs N`: visit at most `N` directories, including the root and non-repository folders. Default `1000`, allowed range `1` to `100000`. Excluded folders and child directory links do not consume this budget.
+
+Discovery uses a sorted depth-first traversal. It always skips `.git` directories and does not follow child symbolic links or Windows junctions, preventing loops and traversal outside the chosen tree. An explicitly selected root may itself be a link.
+
+If more eligible folders remain when the budget is exhausted, the command returns the repositories already found, adds an error explaining that the scan is incomplete, and exits with code `1`. Child-folder read errors also preserve other results. Reaching the requested depth is a normal, successful boundary.
+
+These options control repository discovery only: exclusions and the directory budget do not restrict Git's own file-status inspection inside a discovered repository. `--name` and `--dirty` filter the results after discovery and do not reduce its budget.
 
 ## Upstream comparison
 
