@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased — 2026-09-16
+## 0.2.0 — 2026-09-17
+
+### Release polish
+
+- Add `--version` / `-v`, reading the package version without scanning.
+- Show repository paths to distinguish identical folder names, plus a summary of displayed results.
+- Clearly mark incomplete scans in terminal output; preserve the JSON structure.
+- Fix upstream lookup when a branch and tag share a name.
+- Document installation from the release tag and consolidate the completed milestones below.
+
+### Discovery — completed 2026-09-16
 
 - Add `--depth` for nested repository discovery, retaining the default depth of one.
 - Add repeatable `--exclude` folder names to prune discovery subtrees.
@@ -8,21 +18,21 @@
 - Skip Git metadata and child directory links; retain results when a child scan fails.
 - Test depth boundaries, exclusions, directory budgets, link cycles, and invalid arguments.
 
-## Unreleased — 2026-09-15
+### Upstream comparison — completed 2026-09-15
 
 - Show upstream names and ahead/behind commit counts in text and JSON.
 - Distinguish missing upstream refs, unconfigured tracking, unborn branches, and detached HEAD.
 - Compare local refs only and disable lazy fetching; keep file-change filters unchanged.
 - Test synced, ahead, behind, diverged, local-upstream, and worktree cases without remote access.
 
-## Unreleased — 2026-09-14
+### Change counts — completed 2026-09-14
 
 - Report staged, unstaged, untracked, and conflicted path counts in text and JSON.
 - Preserve raw status spacing so unstaged changes are classified correctly.
 - Count detected renames once and enumerate individual files inside untracked folders.
 - Cover mixed changes, ignored files, conflicts, renames, and unusual filenames.
 
-## Unreleased — 2026-09-10
+### Filters — completed 2026-09-10
 
 - Add `--dirty` to show repositories with local changes.
 - Add `--name TEXT` for case-insensitive substring matching of repository names.

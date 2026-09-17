@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, unlink, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, unlink, symlink, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,51 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { scanRepositories, inspectRepository } from '../src/repositories.js';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
+
+test('version flags read package metadata without scanning the requested directory', async () => {
+  const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  for (const flag of ['--version', '-v']) {
+    const result = spawnSync(process.execPath, [cli, 'nonexistent-folder', flag], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), `repo-lens ${version}`);
+    assert.equal(result.stderr, '');
+  }
+});
+
+test('text output identifies same-name repositories and summarizes only displayed results', async t => {
+  const root = await fixture(t);
+  await mkdir(path.join(root, 'one'));
+  await mkdir(path.join(root, 'two'));
+  const clean = await repository(path.join(root, 'one'), 'app');
+  const dirty = await repository(path.join(root, 'two'), 'app');
+  await writeFile(path.join(dirty, 'new.txt'), 'new');
+  const run = (...args) => spawnSync(process.execPath, [cli, root, '--depth', '2', ...args], { encoding: 'utf8' });
+  const text = run();
+  assert.equal(text.status, 0, text.stderr);
+  assert.ok(text.stdout.includes(`Path: ${clean}`));
+  assert.ok(text.stdout.includes(`Path: ${dirty}`));
+  assert.match(text.stdout, /Shown: 2 repositories \(1 changed, 1 clean\); 0 scan errors/);
+  const filtered = run('--dirty');
+  assert.equal(filtered.status, 0, filtered.stderr);
+  assert.match(filtered.stdout, /Shown: 1 repository \(1 changed, 0 clean\)/);
+  assert.ok(!filtered.stdout.includes(`Path: ${clean}`));
+  assert.deepEqual(Object.keys(JSON.parse(run('--json').stdout)), ['repositories', 'errors']);
+  const limited = run('--max-dirs', '1');
+  assert.equal(limited.status, 1);
+  assert.match(limited.stdout, /Scan incomplete/);
+  assert.match(limited.stderr, /Directory limit/);
+});
+
+test('upstream lookup handles branch and tag names that collide', async t => {
+  const root = await fixture(t);
+  const repo = await repository(root, 'collision');
+  git(repo, 'branch', 'base');
+  git(repo, 'branch', '--set-upstream-to=base', 'main');
+  git(repo, 'tag', 'main');
+  const result = inspectRepository(repo);
+  assert.equal(result.branch, 'main');
+  assert.deepEqual(result.upstream, { status: 'tracked', name: 'base', ahead: 0, behind: 0 });
+});
 
 test('scan depth includes the root, respects boundaries and discovers nested repositories', async t => {
   const root = await fixture(t);

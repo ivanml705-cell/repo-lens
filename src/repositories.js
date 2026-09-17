@@ -19,13 +19,13 @@ async function hasGitMarker(directory) {
   }
 }
 
-function inspectUpstream(directory, branch, hasCommit) {
+function inspectUpstream(directory, branchRef, hasCommit) {
   const unavailable = status => ({ status, name: null, ahead: null, behind: null });
   if (!hasCommit) return unavailable('unborn');
-  if (branch.startsWith('detached:')) return unavailable('detached');
+  if (branchRef === null) return unavailable('detached');
   const [name, ref, track] = git(directory, [
     'for-each-ref', '--format=%(upstream:short)%00%(upstream)%00%(upstream:track)',
-    `refs/heads/${branch}`,
+    branchRef,
   ]).split('\0');
   if (!ref) return unavailable('none');
   if (track === '[gone]') return { ...unavailable('gone'), name };
@@ -43,7 +43,11 @@ export function inspectRepository(directory) {
   const status = git(directory, ['status', '--porcelain=v1', '-z', '--untracked-files=all', '--renames'], true);
   const changes = countChanges(status);
   let branch;
-  try { branch = git(directory, ['symbolic-ref', '--short', 'HEAD']); }
+  let branchRef = null;
+  try {
+    branchRef = git(directory, ['symbolic-ref', 'HEAD']);
+    branch = branchRef.replace(/^refs\/heads\//, '');
+  }
   catch { branch = `detached:${git(directory, ['rev-parse', '--short', 'HEAD'])}`; }
   let lastCommit = null;
   try { lastCommit = git(directory, ['log', '-1', '--format=%s']); }
@@ -51,11 +55,11 @@ export function inspectRepository(directory) {
     // A newly initialized repository has no commits yet.
     try { git(directory, ['rev-parse', '--verify', 'HEAD']); }
     catch { return { name: path.basename(directory), path: directory, branch, dirty: status.length > 0, lastCommit, changes,
-      upstream: inspectUpstream(directory, branch, false) }; }
+      upstream: inspectUpstream(directory, branchRef, false) }; }
     throw new Error('Unable to read the last commit');
   }
   return { name: path.basename(directory), path: directory, branch, dirty: status.length > 0, lastCommit, changes,
-    upstream: inspectUpstream(directory, branch, true) };
+    upstream: inspectUpstream(directory, branchRef, true) };
 }
 
 export function validateScanOptions({ depth = 1, exclude = [], maxDirs = 1000 } = {}) {

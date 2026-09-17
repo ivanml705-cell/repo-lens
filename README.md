@@ -2,7 +2,7 @@
 
 A small, dependency-free CLI that gives you a quick overview of your local Git repositories.
 
-**Status: early development.** Configurable discovery, filters, file change counts, and upstream summaries are working. Final polish for v0.2 is next.
+**Version 0.2.0.** Inspect nested repositories, filter local changes, and compare upstream commits without dependencies or network requests.
 
 ## Requirements
 
@@ -10,6 +10,17 @@ A small, dependency-free CLI that gives you a quick overview of your local Git r
 - Git available on your PATH
 
 ## Run
+
+Clone the repository and select the release:
+
+```sh
+git clone https://github.com/ivanml705-cell/repo-lens.git
+cd repo-lens
+git checkout v0.2.0
+node src/cli.js --version
+```
+
+Then scan your project folder:
 
 ```sh
 node src/cli.js /path/to/projects
@@ -29,18 +40,25 @@ Example output:
 
 ```text
 [clean] notes-cli (main)
+  Path: /projects/notes-cli
   0 staged, 0 unstaged, 0 untracked
   origin/main: 0 ahead, 0 behind (local refs)
   Add Markdown export
+
 [changed] repo-lens (main)
+  Path: /projects/repo-lens
   1 staged, 2 unstaged, 3 untracked
   origin/main: 2 ahead, 1 behind (local refs)
   Add local repository scanning
+
+Shown: 2 repositories (1 changed, 1 clean); 0 scan errors.
 ```
 
 The scan includes ordinary repositories and Git worktrees. Empty repositories display `No commits yet`; detached checkouts display `detached:<commit>`. Bare repositories are outside the initial scope.
 
 JSON output contains `repositories` and `errors`. Each repository includes `name`, `path`, `branch`, `dirty`, `lastCommit`, `changes`, and `upstream`. A failed repository does not prevent other repositories from being reported. Exit code `1` indicates scan errors; `2` indicates invalid arguments.
+
+Text output identifies repositories by path and summarizes the displayed results after filtering. An incomplete scan is marked explicitly. JSON stays machine-readable and does not include the text summary. `--version` (or `-v`) prints the installed version without scanning.
 
 ## Discover nested repositories
 
@@ -117,6 +135,8 @@ Combine both filters to show only matching names with local changes. Filters wor
 No matches is a successful result: text output says `No Git repositories match the filters.`, while JSON contains an empty `repositories` array. Filtering applies after scanning, so scan errors remain visible and still produce exit code `1` even when no repositories match.
 
 ## Development
+
+The project is distributed through GitHub source releases; it is not published to npm. To return from the release checkout to development, run `git switch main`.
 
 ```sh
 npm test
